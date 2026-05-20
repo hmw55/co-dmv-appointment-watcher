@@ -3,10 +3,10 @@ import csv
 import time 
 import random 
 import logging 
+import requests  # Added for native Discord HTTP webhook delivery
 from datetime import datetime, timedelta 
 from dotenv import load_dotenv 
 from playwright.sync_api import sync_playwright
-from twilio.rest import Client 
 
 # Load secrets from the local .env file securely
 load_dotenv()
@@ -76,24 +76,32 @@ def human_delay(min_sec=1.5, max_sec=3.5):
     # Introduces natural micro-pauses between actions to mimic human behavior.
     time.sleep(random.uniform(min_sec, max_sec))
 
-def send_sms_alert(location_name, appt_details):
+def send_discord_alert(location_name, appt_details):
+    """Dispatches real-time markdown notifications straight to your private Discord channel via Webhook."""
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        logging.error("Notification dropped: DISCORD_WEBHOOK_URL is missing from your .env profile configuration.")
+        return
+
+    payload = {
+        "content": (
+            f"\U0001F6A8\U0001F6A8\U0001F6A8 **DMV MATCH FOUND!** \U0001F6A8\U0001F6A8\U0001F6A8\n"
+            f"**Location:** {location_name}\n"
+            f"**Details:** {appt_details}\n"
+            f"⚡ *Claim it immediately! Remember to cancel your original booking first.* \n"
+            f"@everyone"
+        )
+    }
+
     try:
-        twilio_client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
-        message_body = (
-            f"\U0001F6A8\U0001F6A8\U0001F6A8 DMV SLOT OPEN \U0001F6A8\U0001F6A8\U0001F6A8\n"
-            f"Location: {location_name}\n"
-            f"Details: {appt_details}\n"
-            f"HURRY AND CLAIM IT!\n"
-            f"Don't forget to cancel original booking first!"
-        )
-        twilio_client.messages.create(
-            body=message_body,
-            from_=os.getenv("TWILIO_PHONE_NUMBER"),
-            to=os.getenv("CELL_NUMBER")
-        )
-        logging.info(f"SMS Alert successfully sent for {location_name}!")
+        # Discord webhooks return a 204 No Content status code upon success
+        response = requests.post(webhook_url, json=payload, timeout=10)
+        if response.status_code == 204:
+            logging.info(f"Discord Alert successfully sent for {location_name}!")
+        else:
+            logging.error(f"Discord server rejected payload with status code: {response.status_code}")
     except Exception as e:
-        logging.error(f"Failed to send SMS text alert: {e}")
+        logging.error(f"Failed to post structured update alert to Discord client: {e}")
 
 def parse_and_validate_date(calendar_text):
     """
@@ -114,7 +122,6 @@ def parse_and_validate_date(calendar_text):
         is_sooner = found_date < MY_CURRENT_APPOINTMENT
         
         # 2. Travel Buffer Filter: Parse full exact time to make sure it's not starting right now
-        # Converts '5/20/2026 11:45 AM' to an operational datetime object
         full_appt_datetime = datetime.strptime(clean_timestamp_str, "%m/%d/%Y %I:%M %p")
         
         # Define minimum threshold (Now + 60 minutes)
@@ -130,7 +137,7 @@ def parse_and_validate_date(calendar_text):
         return False, None
     
 def run_dmv_sweep():
-    # Quiet hours check: Don't run between 1AM and 9AM to match human(ish) sleep patterns
+    # Quiet hours check: Don't run between 1AM and 9AM to match human sleep patterns
     current_hour = datetime.now().hour
     if 1 <= current_hour < 9:
         logging.info("DMV system is outside standard waking hours (1 AM - 9 AM). Skipping sweep.")
@@ -139,7 +146,7 @@ def run_dmv_sweep():
     logging.info("Starting safe sequential sweep of target DMV locations...")
 
     with sync_playwright() as p:
-        # Launching browser constrained perfectly to standard laptop frame scaling boundaries
+        # Launching browser constrained to standard laptop frame scaling boundaries
         browser = p.firefox.launch(headless=True, args=["--start-maximized"])
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0", 
@@ -182,8 +189,8 @@ def run_dmv_sweep():
 
                 if is_sooner:
                     # Executes raw ASCII system bell sequence to trigger terminal audio alerts
-                    logging.info(f"\a\a\a\U0001F6A8\U0001F6A8\U0001F6A8 MATCH FOUND AT {loc}! \U0001F6A8\U0001F6A8\U0001F6A8\n\U0001F6A8\U0001F6A8\U0001F6A8 Open Date/Time: {full_appointment_details} 🚨🚨🚨")
-                    send_sms_alert(loc, f"\U0001F6A8\U0001F6A8\U0001F6A8 Open slot found: {full_appointment_details}!\U0001F6A8\U0001F6A8\U0001F6A8")
+                    logging.info(f"\a\a\a\U0001F6A8\U0001F6A8\U0001F6A8 MATCH FOUND AT {loc}! \U0001F6A8\U0001F6A8\U0001F6A8\n\U0001F6A8\U0001F6A8\U0001F6A8 Open Date/Time: {full_appointment_details} \U0001F6A8\U0001F6A8\U0001F6A8")
+                    send_discord_alert(loc, full_appointment_details)
                 else:
                     logging.info(f"Checked {loc}. Earliest slot: {full_appointment_details or 'None displayed'}")
 
