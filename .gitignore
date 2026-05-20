@@ -1,0 +1,20 @@
+# Local environment variables containing private API tokens
+.env 
+
+# Virtual environment folder
+
+venv/ 
+.venv/
+
+# Python cache files
+
+__pycache__/
+*.pyc 
+
+
+# DMV Data Tracking Outputs
+
+dmv_master_log.txt
+dmv_appointment_trends.csv
+*.ods
+*.png
